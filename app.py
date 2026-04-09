@@ -1,9 +1,11 @@
 import warnings
 from typing import Dict, Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import shap
 import streamlit as st
 from catboost import CatBoostClassifier
 from lightgbm import LGBMClassifier
@@ -206,7 +208,9 @@ st.write("Notebook-to-Streamlit conversion with interactive EDA, preprocessing, 
 
 raw_df = load_data(DATA_PATH)
 
-tab_eda, tab_pre, tab_models, tab_predict = st.tabs(["EDA", "Preprocessing", "Models", "🔬 Patient Predictor"])
+tab_eda, tab_pre, tab_models, tab_predict, tab_explain = st.tabs(
+    ["EDA", "Preprocessing", "Models", "🔬 Patient Predictor", "🧠 Explainability"]
+)
 
 with tab_eda:
     st.subheader("Exploratory Data Analysis")
@@ -295,6 +299,8 @@ with tab_models:
             st.session_state["model_summary"] = summary_df
             st.session_state["model_details"] = details
             st.session_state["trained_models"] = trained_models
+            st.session_state["test_size"] = float(test_size)
+            st.session_state["random_state"] = int(random_state)
             st.success("Training complete.")
 
         if "model_summary" in st.session_state:
@@ -447,5 +453,94 @@ with tab_predict:
                 }
             )
             st.dataframe(vote_df, width="stretch")
+
+with tab_explain:
+    st.subheader("🧠 Explainability")
+
+    if "trained_models" not in st.session_state:
+        st.warning("Please train models first in the Models tab.")
+    elif "clean_df" not in st.session_state:
+        st.warning("Please run preprocessing first in the Preprocessing tab.")
+    elif "test_size" not in st.session_state or "random_state" not in st.session_state:
+        st.warning("Train models again to store test split settings (test_size and random_state).")
+    else:
+        tree_model_names = [
+            "Random Forest",
+            "XGBoost",
+            "LightGBM",
+            "Extra Trees",
+            "Gradient Boosting",
+            "Stochastic Gradient Boosting",
+        ]
+        trained_models = st.session_state["trained_models"]
+        available_tree_models = [name for name in tree_model_names if name in trained_models]
+
+        if not available_tree_models:
+            st.warning("No trained tree-based models are available for SHAP explainability.")
+        else:
+            selected_model_name = st.selectbox("Select a tree-based model", options=available_tree_models)
+            selected_model = trained_models[selected_model_name]
+
+            clean_df = st.session_state["clean_df"].copy()
+            feature_cols = [col for col in clean_df.columns if col != TARGET_COL]
+            x = clean_df[feature_cols].copy()
+            y = clean_df[TARGET_COL]
+
+            # Keep preprocessing aligned with train_models().
+            for col in x.select_dtypes(include=["object", "string", "category"]).columns:
+                local_encoder = LabelEncoder()
+                x[col] = local_encoder.fit_transform(x[col].astype(str))
+            for col in x.columns:
+                x[col] = pd.to_numeric(x[col], errors="coerce")
+            x = x.fillna(x.median(numeric_only=True))
+
+            _, x_test, _, _ = train_test_split(
+                x,
+                y,
+                test_size=float(st.session_state["test_size"]),
+                random_state=int(st.session_state["random_state"]),
+                stratify=y,
+            )
+
+            explainer = shap.TreeExplainer(selected_model)
+            shap_values = explainer.shap_values(x_test)
+
+            shap_values_for_plot = shap_values[1] if isinstance(shap_values, list) else shap_values
+
+            st.write("SHAP Summary Plot")
+            plt.figure()
+            shap.summary_plot(shap_values_for_plot, x_test, show=False)
+            st.pyplot(plt.gcf())
+            plt.close()
+
+            st.write("SHAP Bar Plot")
+            plt.figure()
+            shap.summary_plot(shap_values_for_plot, x_test, plot_type="bar", show=False)
+            st.pyplot(plt.gcf())
+            plt.close()
+
+            patient_index = st.number_input(
+                "Patient index for waterfall plot",
+                min_value=0,
+                max_value=max(0, len(x_test) - 1),
+                value=0,
+                step=1,
+            )
+
+            if len(x_test) > 0:
+                idx = int(patient_index)
+                expected_value = explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value
+                sample_explanation = shap.Explanation(
+                    values=shap_values_for_plot[idx],
+                    base_values=expected_value,
+                    data=x_test.iloc[idx],
+                    feature_names=x_test.columns.tolist(),
+                )
+
+                st.write("SHAP Waterfall Plot")
+                plt.figure()
+                shap.plots.waterfall(sample_explanation, show=False)
+                st.pyplot(plt.gcf())
+                plt.close()
 
 st.caption("Next phase ready: add patient-input form and per-model CKD prediction.")
