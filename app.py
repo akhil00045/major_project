@@ -327,7 +327,7 @@ with tab_models:
             st.text(model_detail["classification_report"])
 
 with tab_predict:
-    st.subheader("🔬 Patient Predictor")
+    st.subheader("Patient Predictor")
 
     if "trained_models" not in st.session_state:
         st.warning("Please train models first in the Models tab")
@@ -397,7 +397,7 @@ with tab_predict:
                 "coronary_artery_disease": coronary_artery_disease,
                 "appetite": appetite,
                 "peda_edema": peda_edema,
-                "aanemia": aanemia,
+                "anemia": aanemia,
             }
 
             input_df = pd.DataFrame([input_row])
@@ -455,7 +455,7 @@ with tab_predict:
             st.dataframe(vote_df, width="stretch")
 
 with tab_explain:
-    st.subheader("🧠 Explainability")
+    st.subheader("Explainability")
 
     if "trained_models" not in st.session_state:
         st.warning("Please train models first in the Models tab.")
@@ -471,6 +471,7 @@ with tab_explain:
             "Extra Trees",
             "Gradient Boosting",
             "Stochastic Gradient Boosting",
+            "CatBoost"
         ]
         trained_models = st.session_state["trained_models"]
         available_tree_models = [name for name in tree_model_names if name in trained_models]
@@ -505,7 +506,12 @@ with tab_explain:
             explainer = shap.TreeExplainer(selected_model)
             shap_values = explainer.shap_values(x_test)
 
-            shap_values_for_plot = shap_values[1] if isinstance(shap_values, list) else shap_values
+            if isinstance(shap_values, list):
+                shap_values_for_plot = shap_values[1]
+            elif shap_values.ndim == 3:
+                shap_values_for_plot = shap_values[:, :, 1]
+            else:
+                shap_values_for_plot = shap_values
 
             st.write("SHAP Summary Plot")
             plt.figure()
@@ -529,12 +535,19 @@ with tab_explain:
 
             if len(x_test) > 0:
                 idx = int(patient_index)
-                expected_value = explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value
+                ev = explainer.expected_value
+                if isinstance(ev, (list, np.ndarray)):
+                    expected_value = float(ev[1])
+                else:
+                    expected_value = float(ev)
+                sample_shap_values = shap_values_for_plot[idx]
+                if hasattr(sample_shap_values, "ndim") and sample_shap_values.ndim == 2:
+                    sample_shap_values = sample_shap_values[:, 1]
                 sample_explanation = shap.Explanation(
-                    values=shap_values_for_plot[idx],
-                    base_values=expected_value,
-                    data=x_test.iloc[idx],
-                    feature_names=x_test.columns.tolist(),
+                values=sample_shap_values,
+                base_values=expected_value,
+                data=x_test.iloc[idx],
+                feature_names=x_test.columns.tolist(),
                 )
 
                 st.write("SHAP Waterfall Plot")
@@ -543,4 +556,4 @@ with tab_explain:
                 st.pyplot(plt.gcf())
                 plt.close()
 
-st.caption("Next phase ready: add patient-input form and per-model CKD prediction.")
+
