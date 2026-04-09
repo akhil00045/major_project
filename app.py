@@ -397,7 +397,7 @@ with tab_predict:
                 "coronary_artery_disease": coronary_artery_disease,
                 "appetite": appetite,
                 "peda_edema": peda_edema,
-                "anemia": aanemia,
+                "aanemia": aanemia,
             }
 
             input_df = pd.DataFrame([input_row])
